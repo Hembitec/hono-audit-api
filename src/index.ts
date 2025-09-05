@@ -2,11 +2,11 @@ import { Hono } from 'hono';
 import { logger } from 'hono/logger';
 import { prettyJSON } from 'hono/pretty-json';
 import { cors } from 'hono/cors';
-import { 
-  getWebsiteAuditor, 
-  auditWebsite, 
-  quickAuditWebsite, 
-  checkWebsiteAccessibility 
+import {
+  getWebsiteAuditor,
+  auditWebsite,
+  quickAuditWebsite,
+  checkWebsiteAccessibility
 } from './services/auditor.js';
 import { validateUrl } from './services/validator.js';
 import { readFileSync } from 'fs';
@@ -22,8 +22,8 @@ app.use(cors());
 
 // Health check endpoint
 app.get('/health', (c) => {
-  return c.json({ 
-    status: 'ok', 
+  return c.json({
+    status: 'ok',
     timestamp: new Date().toISOString(),
     service: 'Website Audit API'
   });
@@ -74,11 +74,10 @@ app.get('/screenshots/:name', (c) => {
 // Main audit endpoint
 app.get('/audit', async (c) => {
   try {
-  const url = c.req.query('url');
-  const includeScreenshot = String(c.req.query('includeScreenshot') || '').toLowerCase() === 'true';
-  const screenshotType = String(c.req.query('screenshotType') || 'jpeg') as 'jpeg' | 'png';
-  const screenshotQuality = Number(c.req.query('screenshotQuality') || 80);
-  const downloadImages = String(c.req.query('downloadImages') || '').toLowerCase() === 'true';
+    const url = c.req.query('url');
+    const includeScreenshot = String(c.req.query('includeScreenshot') || '').toLowerCase() === 'true';
+    const screenshotType = String(c.req.query('screenshotType') || 'jpeg') as 'jpeg' | 'png';
+    const screenshotQuality = Number(c.req.query('screenshotQuality') || 80);
 
     // Validate URL parameter
     if (!url) {
@@ -97,9 +96,9 @@ app.get('/audit', async (c) => {
       }, 400);
     }
 
-  // Perform the audit using the existing service (use validated URL and pass options)
-  const validatedUrl = validationResult.url!;
-  const auditResult = await auditWebsite(validatedUrl, { includeScreenshot, screenshotType, screenshotQuality });
+    // Perform the audit using the existing service (use validated URL and pass options)
+    const validatedUrl = validationResult.url!;
+    const auditResult = await auditWebsite(validatedUrl, { includeScreenshot, screenshotType, screenshotQuality });
 
     if (!auditResult.success) {
       return c.json({
