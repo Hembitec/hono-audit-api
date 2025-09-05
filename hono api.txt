@@ -1,0 +1,148 @@
+You are tasked with building a complete website auditing API using Hono.js. This API will analyze webpages and return comprehensive audit data including SEO metrics, performance data, content analysis, and resource information.
+
+## Project Requirements
+
+*Core Technologies:*
+- Framework: Hono.js
+- Browser Automation: Puppeteer (for dynamic content and performance metrics)
+- HTML Parsing: Cheerio (for efficient DOM parsing)
+- Language: TypeScript
+
+*API Specification:*
+- Endpoint: GET /audit
+- Query Parameter: url (required)
+- Example: /audit?url=https://example.com
+- Input Validation: Validate URL format, return 400 status with JSON error for invalid URLs
+- Output: JSON response matching the exact schema below
+
+## Required Output Schema
+
+Implement these TypeScript interfaces exactly as defined:
+
+typescript
+export interface WebsiteAuditResult {
+  url: string;
+  statusCode: number;
+  metadata: PageMetadata;
+  performance: PerformanceMetrics;
+  seo: SeoDetails;
+  content: ContentDetails;
+  resources: PageResources;
+  structuredData: any[];
+}
+
+export interface PageMetadata {
+  lang?: string;
+  charset?: string;
+  favicon?: string;
+  viewport?: string;
+}
+
+export interface PerformanceMetrics {
+  loadTimeInMs: number;
+}
+
+export interface SeoDetails {
+  title: string;
+  description: string;
+  metaTags: MetaTag[];
+  canonicalUrl?: string;
+  ogTags: OgTag[];
+}
+
+export interface MetaTag {
+  name?: string;
+  property?: string;
+  content: string;
+}
+
+export interface OgTag {
+  property: string;
+  content: string;
+}
+
+export interface ContentDetails {
+  h1: Heading[];
+  h2: Heading[];
+  h3: Heading[];
+  h4: Heading[];
+  h5: Heading[];
+  h6: Heading[];
+  images: ImageDetails[];
+}
+
+export interface Heading {
+  textContent: string;
+}
+
+export interface ImageDetails {
+  src: string;
+  alt: string;
+}
+
+export interface PageResources {
+  links: LinkDetails[];
+  scripts: ScriptDetails[];
+  styles: StyleDetails[];
+}
+
+export interface LinkDetails {
+  href: string;
+  textContent: string;
+  isInternal: boolean;
+  rel?: string;
+}
+
+export interface ScriptDetails {
+  src?: string;
+  inlineContent?: string;
+}
+
+export interface StyleDetails {
+  href?: string;
+  inlineContent?: string;
+}
+
+
+## Implementation Requirements
+
+*Project Structure:*
+Generate a complete, runnable project with:
+- package.json with all dependencies (hono, puppeteer, cheerio, typescript)
+- tsconfig.json for TypeScript configuration
+- src/index.ts with the main server and audit logic
+
+*Core Logic:*
+1. *URL Validation:* Validate the input URL format
+2. *Page Loading:* Use Puppeteer to navigate to the URL and wait for full page load
+3. *Performance Measurement:* Capture page load time using Puppeteer
+4. *Status Code Capture:* Record the HTTP response status
+5. *HTML Extraction:* Get the complete HTML after dynamic content loads
+6. *Data Parsing:* Use Cheerio to extract:
+   - Page metadata (lang, charset, favicon, viewport)
+   - SEO data (title, description, meta tags, canonical URL, OG tags)
+   - Content structure (all heading levels H1-H6, images with alt text)
+   - Resources (links with internal/external classification, scripts, stylesheets)
+   - Structured data from JSON-LD scripts
+7. *Response Construction:* Build the complete WebsiteAuditResult object
+
+*Error Handling:*
+- Implement comprehensive try-catch blocks
+- Handle network errors, timeouts, and invalid URLs gracefully
+- Return appropriate HTTP status codes (400 for bad requests, 500 for server errors)
+- Provide clear error messages in JSON format
+
+*Code Quality:*
+- Add detailed comments explaining each extraction step
+- Use proper TypeScript typing throughout
+- Follow clean code practices
+- Ensure the server is production-ready
+
+*Key Implementation Notes:*
+- Use Cheerio selectors like $('title').text(), $('meta[name="description"]'), etc.
+- For links, determine if they're internal by comparing domains
+- Extract both inline and external scripts/styles
+- Parse JSON-LD structured data from <script type="application/ld+json"> tags
+- Handle cases where optional fields might not exist
+
+Deliver a complete, immediately runnable codebase that can be started with npm install && npm run dev.

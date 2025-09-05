@@ -1,0 +1,43 @@
+{
+  "name": "hono-audit-api",
+  "version": "1.0.0",
+  "description": "A comprehensive website auditing API built with Hono.js",
+  "main": "dist/index.js",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "type-check": "tsc --noEmit",
+    "clean": "rimraf dist"
+  },
+  "keywords": [
+    "hono",
+    "api",
+    "website-audit",
+    "seo",
+    "performance",
+    "puppeteer",
+    "cheerio"
+  ],
+  "author": "Hembitec",
+  "license": "MIT",
+  "dependencies": {
+    "@hono/node-server": "^1.12.0",
+    "cheerio": "^1.0.0-rc.12",
+    "hono": "^4.5.8",
+    "puppeteer": "^22.15.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.15",
+    "@types/pino": "^7.0.4",
+    "nodemon": "^3.1.4",
+    "rimraf": "^5.0.9",
+    "tsx": "^4.16.5",
+    "typescript": "^5.5.4"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
