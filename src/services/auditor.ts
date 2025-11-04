@@ -1,8 +1,14 @@
-import { WebsiteAuditResult, AuditOptions, ApiError, PageResources } from '../types/interfaces.js';
+import { WebsiteAuditResult, AuditOptions, ApiError, PageResources, AccessibilityAudit, CoreWebVitals, SecurityAudit, Technology } from '../types/interfaces.js';
 import { validateUrl, ValidationResult } from './validator.js';
 import { getBrowserService, PageLoadResult } from './browser.js';
 import { createHtmlParser, PageStatistics } from './parser.js';
 import { measureExecutionTime, retryWithBackoff } from '../utils/helpers.js';
+import { run } from 'axe-core';
+import Wappalyzer from 'wappalyzer-core';
+import { promises as dns } from 'dns';
+import * as tls from 'tls';
+import { Page } from 'playwright';
+import * as fs from 'fs';
 
 /**
  * Main audit service that orchestrates all components
@@ -10,6 +16,13 @@ import { measureExecutionTime, retryWithBackoff } from '../utils/helpers.js';
  */
 export class WebsiteAuditor {
   private browserService = getBrowserService();
+  private wappalyzer: Wappalyzer;
+  private axeScript: string;
+
+  constructor() {
+    this.wappalyzer = new Wappalyzer();
+    this.axeScript = fs.readFileSync('node_modules/axe-core/axe.min.js', 'utf-8');
+  }
 
   /**
    * Perform a complete website audit
@@ -20,7 +33,7 @@ export class WebsiteAuditor {
   async auditWebsite(url: string, options: AuditOptions = {}): Promise<AuditResult> {
     const startTime = Date.now();
     let validationResult: ValidationResult;
-    let pageLoadResult: PageLoadResult;
+    let page: Page | undefined;
 
     try {
       // Step 1: Validate URL
@@ -44,12 +57,11 @@ export class WebsiteAuditor {
         () => this.loadPageWithRetry(validatedUrl, options)
       );
 
-      pageLoadResult = loadResult;
       
-      if (!pageLoadResult.success) {
+      if (!loadResult.success) {
         return {
           success: false,
-          error: pageLoadResult.error!,
+          error: loadResult.error!,
           executionTime: Date.now() - startTime,
           details: {
             step: 'page_loading',
@@ -58,13 +70,15 @@ export class WebsiteAuditor {
         };
       }
 
+      page = loadResult.page;
+
       console.log(`✅ Page loaded successfully (${loadTime}ms)`);
-      console.log(`📊 Status: ${pageLoadResult.statusCode}, Load time: ${pageLoadResult.loadTimeInMs}ms`);
+      console.log(`📊 Status: ${loadResult.statusCode}, Load time: ${loadResult.loadTimeInMs}ms`);
 
       // Step 3: Parse HTML and extract data
       console.log(`📝 Parsing HTML content...`);
       const { result: parseResult, executionTime: parseTime } = await measureExecutionTime(
-        () => this.parseHtmlContent(pageLoadResult.html!, pageLoadResult.url)
+        () => this.parseHtmlContent(loadResult.html!, loadResult.url)
       );
 
       console.log(`✅ HTML parsed successfully (${parseTime}ms)`);
@@ -76,17 +90,44 @@ export class WebsiteAuditor {
 
       const auditResult: WebsiteAuditResult & { response?: { headers: Record<string, string>, loadTimeInMs: number } } = {
         ...parseResult,
-        url: pageLoadResult.url, // Use final URL (after redirects)
-        statusCode: pageLoadResult.statusCode!,
+        url: loadResult.url, // Use final URL (after redirects)
+        statusCode: loadResult.statusCode!,
         performance: {
-          loadTimeInMs: pageLoadResult.loadTimeInMs || 0,
+          loadTimeInMs: loadResult.loadTimeInMs || 0,
         },
         resources: modifiedResources,
         response: {
-          headers: pageLoadResult.headers!,
-          loadTimeInMs: pageLoadResult.loadTimeInMs || 0,
+          headers: loadResult.headers!,
+          loadTimeInMs: loadResult.loadTimeInMs || 0,
         }
       };
+
+      // Step 5: Perform accessibility audit
+      if (page) {
+        console.log('♿ Performing accessibility audit...');
+        const accessibilityResult = await this.runAccessibilityAudit(page);
+        auditResult.accessibility = accessibilityResult;
+        console.log(`✅ Accessibility audit completed with ${accessibilityResult.violations.length} violations.`);
+
+        console.log('🚀 Measuring Core Web Vitals...');
+        const coreWebVitals = await this.measureCoreWebVitals(page);
+        auditResult.performance.coreWebVitals = coreWebVitals;
+        console.log('✅ Core Web Vitals measured.');
+      }
+
+      // Step 6: Analyze security headers
+      if (loadResult.headers) {
+        console.log('🔒 Analyzing security headers...');
+        const securityAudit = this.analyzeSecurityHeaders(loadResult.headers);
+        auditResult.security = securityAudit;
+        console.log('✅ Security headers analyzed.');
+      }
+
+      // Step 7: Detect technology stack
+      console.log('💻 Detecting technology stack...');
+      const technologies = await this.detectTechnologies(loadResult.url, loadResult.html!, loadResult.headers!);
+      auditResult.technologies = technologies;
+      console.log(`✅ Detected ${technologies.length} technologies.`);
 
       // Optionally capture screenshot(s)
       if (options.includeScreenshot) {
@@ -94,7 +135,7 @@ export class WebsiteAuditor {
           const shotOpts: any = {};
           if (options.screenshotType) shotOpts.type = options.screenshotType;
           if (typeof options.screenshotQuality === 'number') shotOpts.quality = options.screenshotQuality;
-          const shots = await this.browserService.screenshotUrl(pageLoadResult.url, shotOpts);
+          const shots = await this.browserService.screenshotUrl(loadResult.url, shotOpts);
           // attach screenshot(s) to audit result
           auditResult.screenshot = Array.isArray(shots) ? shots : [shots];
         } catch (shotErr) {
@@ -106,7 +147,7 @@ export class WebsiteAuditor {
       const totalExecutionTime = Date.now() - startTime;
       console.log(`🎉 Audit completed successfully (${totalExecutionTime}ms total)`);
 
-      const parser = createHtmlParser(pageLoadResult.html!, pageLoadResult.url);
+      const parser = createHtmlParser(loadResult.html!, loadResult.url);
       const statistics = parser.getPageStatistics();
 
       return {
@@ -136,6 +177,134 @@ export class WebsiteAuditor {
 
       console.error('❌ Audit failed:', error);
       return errorResult;
+    } finally {
+      if (page) {
+        await page.close();
+      }
+    }
+  }
+
+  /**
+   * Run accessibility audit on the page
+   * @param page - Playwright page instance
+   * @returns Accessibility audit results
+   */
+  private async runAccessibilityAudit(page: Page): Promise<AccessibilityAudit> {
+    try {
+      await page.evaluate(this.axeScript);
+      const axeResults = await page.evaluate(() => (window as any).axe.run({
+        runOnly: {
+          type: 'tag',
+          values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'],
+        },
+      }));
+
+      const violationSummary = {
+        critical: 0,
+        serious: 0,
+        moderate: 0,
+        minor: 0,
+      };
+
+      axeResults.violations.forEach((v: any) => {
+        if (v.impact) violationSummary[v.impact]++;
+      });
+
+      return {
+        violations: axeResults.violations,
+        violationSummary,
+      };
+    } catch (error) {
+      console.warn('♿ Accessibility audit failed:', error);
+      return {
+        violations: [],
+        violationSummary: { critical: 0, serious: 0, moderate: 0, minor: 0 },
+      };
+    }
+  }
+
+  /**
+   * Measure Core Web Vitals for the page
+   * @param page - Playwright page instance
+   * @returns Core Web Vitals metrics
+   */
+  private async measureCoreWebVitals(page: any): Promise<CoreWebVitals> {
+    try {
+      const metrics = await page.evaluate(() => {
+        return new Promise<CoreWebVitals>((resolve) => {
+          let lcp = -1, fid = -1, cls = -1;
+
+          new PerformanceObserver((entryList) => {
+            const entries = entryList.getEntries();
+            const lastEntry = entries[entries.length - 1] as any;
+            lcp = lastEntry.renderTime || lastEntry.loadTime;
+          }).observe({ type: 'largest-contentful-paint', buffered: true });
+
+          new PerformanceObserver((entryList) => {
+            const firstInput = entryList.getEntries()[0] as any;
+            fid = firstInput.processingStart - firstInput.startTime;
+          }).observe({ type: 'first-input', buffered: true });
+
+          let cumulativeCls = 0;
+          new PerformanceObserver((entryList) => {
+            const entries = entryList.getEntries() as any[];
+            entries.forEach(e => cumulativeCls += e.value);
+            cls = cumulativeCls;
+          }).observe({ type: 'layout-shift', buffered: true });
+
+          // Resolve after a short delay to allow metrics to be collected
+          setTimeout(() => resolve({ lcp, fid, cls }), 3000);
+        });
+      });
+      return metrics;
+    } catch (error) {
+      console.warn('🚀 Core Web Vitals measurement failed:', error);
+      return { lcp: -1, fid: -1, cls: -1 };
+    }
+  }
+
+  /**
+   * Analyze security headers from the response
+   * @param headers - HTTP response headers
+   * @returns Security audit results
+   */
+  private analyzeSecurityHeaders(headers: Record<string, string>): SecurityAudit {
+    const securityHeaders = [
+      'content-security-policy',
+      'strict-transport-security',
+      'x-content-type-options',
+      'x-frame-options',
+      'x-xss-protection',
+    ];
+
+    const results = securityHeaders.map(name => {
+      const value = headers[name];
+      return {
+        name,
+        value,
+        present: value !== undefined,
+      };
+    });
+
+    return { headers: results };
+  }
+
+  /**
+   * Detect technology stack using Wappalyzer
+   * @param url - The URL of the page
+   * @param html - The HTML content of the page
+   * @param headers - The HTTP response headers
+   * @returns A list of detected technologies
+   */
+  private async detectTechnologies(url: string, html: string, headers: Record<string, string>): Promise<Technology[]> {
+    try {
+      await this.wappalyzer.init();
+      const site = await this.wappalyzer.open(url, headers);
+      const results = await site.analyze();
+      return results.technologies;
+    } catch (error) {
+      console.warn('💻 Technology detection failed:', error);
+      return [];
     }
   }
 
@@ -194,6 +363,7 @@ export class WebsiteAuditor {
    */
   async quickAudit(url: string, options: AuditOptions = {}): Promise<QuickAuditResult> {
     const startTime = Date.now();
+    let page: Page | undefined;
 
     try {
       // Validate URL
@@ -222,22 +392,34 @@ export class WebsiteAuditor {
         };
       }
 
-      // Quick parse - only essential information
-      const parser = createHtmlParser(pageResult.html!, pageResult.url);
-      const auditData = parser.extractAuditData(pageResult.statusCode!);
-      const statistics = parser.getPageStatistics();
+      page = pageResult.page;
+
+      const checks = options.checks || ['seo', 'performance'];
+      const data: any = {
+        url: pageResult.url,
+        statusCode: pageResult.statusCode!,
+      };
+
+      if (checks.includes('seo')) {
+        const parser = createHtmlParser(pageResult.html!, pageResult.url);
+        const auditData = parser.extractAuditData(pageResult.statusCode!);
+        data.title = auditData.seo.title;
+        data.description = auditData.seo.description;
+        data.metadata = auditData.metadata;
+      }
+
+      if (checks.includes('performance')) {
+        data.loadTimeInMs = pageResult.loadTimeInMs || 0;
+      }
+
+      if (checks.includes('statistics')) {
+        const parser = createHtmlParser(pageResult.html!, pageResult.url);
+        data.statistics = parser.getPageStatistics();
+      }
 
       return {
         success: true,
-        data: {
-          url: pageResult.url,
-          statusCode: pageResult.statusCode!,
-          title: auditData.seo.title,
-          description: auditData.seo.description,
-          loadTimeInMs: pageResult.loadTimeInMs || 0,
-          metadata: auditData.metadata,
-          statistics,
-        },
+        data,
         executionTime: Date.now() - startTime,
       };
 
@@ -250,6 +432,10 @@ export class WebsiteAuditor {
         },
         executionTime: Date.now() - startTime,
       };
+    } finally {
+      if (page) {
+        await page.close();
+      }
     }
   }
 
@@ -260,6 +446,7 @@ export class WebsiteAuditor {
    */
   async checkUrlAccessibility(url: string): Promise<AccessibilityResult> {
     const startTime = Date.now();
+    let page: Page | undefined;
 
     try {
       // Validate URL format
@@ -272,15 +459,27 @@ export class WebsiteAuditor {
         };
       }
 
+      const validatedUrl = validationResult.url!;
+      const hostname = new URL(validatedUrl).hostname;
+
+      const [dnsInfo, sslInfo] = await Promise.all([
+        this.getDnsInfo(hostname),
+        this.getSslInfo(hostname),
+      ]);
+
       // Try to load the page with minimal timeout
-      const pageResult = await this.browserService.loadPage(validationResult.url!, {
+      const pageResult = await this.browserService.loadPage(validatedUrl, {
         timeout: 5000, // 5 second timeout
       });
+
+      page = pageResult.page;
 
       const result: AccessibilityResult = {
         accessible: pageResult.success,
         finalUrl: pageResult.url,
         executionTime: Date.now() - startTime,
+        dns: dnsInfo,
+        ssl: sslInfo,
       };
       
       if (pageResult.statusCode !== undefined) result.statusCode = pageResult.statusCode;
@@ -295,7 +494,58 @@ export class WebsiteAuditor {
         error: error instanceof Error ? error.message : 'Unknown error',
         executionTime: Date.now() - startTime,
       };
+    } finally {
+      if (page) {
+        await page.close();
+      }
     }
+  }
+
+  private async getDnsInfo(hostname: string): Promise<DnsInfo> {
+    try {
+      const ipAddress = await dns.lookup(hostname);
+      return { ipAddress: ipAddress.address };
+    } catch (error) {
+      return { error: (error as Error).message };
+    }
+  }
+
+  private getSslInfo(hostname: string): Promise<SslInfo> {
+    return new Promise((resolve) => {
+      let resolved = false;
+      const socket = tls.connect(443, hostname, { servername: hostname }, () => {
+        if (resolved) return;
+        resolved = true;
+        const cert = socket.getPeerCertificate();
+        socket.destroy();
+        resolve({
+          valid: true,
+          validFrom: cert.valid_from,
+          validTo: cert.valid_to,
+          issuer: cert.issuer.O,
+        });
+      });
+
+      socket.on('error', (error) => {
+        if (resolved) return;
+        resolved = true;
+        socket.destroy();
+        resolve({ valid: false, error: error.message });
+      });
+
+      socket.setTimeout(2000, () => {
+        if (resolved) return;
+        resolved = true;
+        socket.destroy();
+        resolve({ valid: false, error: 'Timeout' });
+      });
+
+      socket.on('close', () => {
+        if (resolved) return;
+        resolved = true;
+        resolve({ valid: false, error: 'Socket closed without connection' });
+      });
+    });
   }
 
   /**
@@ -380,6 +630,27 @@ export interface AccessibilityResult {
   loadTimeInMs?: number;
   finalUrl?: string;
   executionTime: number;
+  ssl?: SslInfo;
+  dns?: DnsInfo;
+}
+
+/**
+ * SSL certificate information
+ */
+export interface SslInfo {
+  valid: boolean;
+  validFrom?: string;
+  validTo?: string;
+  issuer?: string;
+  error?: string;
+}
+
+/**
+ * DNS lookup information
+ */
+export interface DnsInfo {
+  ipAddress?: string;
+  error?: string;
 }
 
 /**

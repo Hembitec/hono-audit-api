@@ -9,7 +9,8 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "type-check": "tsc --noEmit",
-    "clean": "rimraf dist"
+    "clean": "rimraf dist",
+    "test": "vitest"
   },
   "keywords": [
     "hono",
@@ -17,16 +18,18 @@
     "website-audit",
     "seo",
     "performance",
-    "puppeteer",
+    "playwright",
     "cheerio"
   ],
   "author": "Hembitec",
   "license": "MIT",
   "dependencies": {
     "@hono/node-server": "^1.12.0",
+    "axe-core": "^4.11.0",
     "cheerio": "^1.0.0-rc.12",
     "hono": "^4.5.8",
-    "puppeteer": "^22.15.0",
+    "playwright": "^1.56.1",
+    "wappalyzer-core": "^7.0.3",
     "zod": "^3.23.8"
   },
   "devDependencies": {
@@ -35,7 +38,8 @@
     "nodemon": "^3.1.4",
     "rimraf": "^5.0.9",
     "tsx": "^4.16.5",
-    "typescript": "^5.5.4"
+    "typescript": "^5.5.4",
+    "vitest": "^4.0.6"
   },
   "engines": {
     "node": ">=18.0.0"

@@ -21,11 +21,22 @@ app.use(prettyJSON());
 app.use(cors());
 
 // Health check endpoint
-app.get('/health', (c) => {
+app.get('/health', async (c) => {
+  const auditor = getWebsiteAuditor();
+  const browserInfo = await auditor.getBrowserInfo();
+
+  const status = browserInfo.isReady ? 'ok' : 'error';
+
   return c.json({
-    status: 'ok',
+    status,
     timestamp: new Date().toISOString(),
-    service: 'Website Audit API'
+    service: 'Website Audit API',
+    dependencies: {
+      browser: {
+        status: browserInfo.status,
+        version: browserInfo.version,
+      },
+    },
   });
 });
 
