@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { logger } from 'hono/logger';
 import { prettyJSON } from 'hono/pretty-json';
 import { cors } from 'hono/cors';
+import { serveStatic } from '@hono/node-server/serve-static';
 import {
   getWebsiteAuditor,
   auditWebsite,
@@ -38,35 +39,6 @@ app.get('/health', async (c) => {
       },
     },
   });
-});
-
-// Serve static UI files
-function serveStatic(filename: string) {
-  try {
-    const filePath = join(process.cwd(), 'public', filename);
-    const content = readFileSync(filePath, { encoding: 'utf8' });
-    return content;
-  } catch {
-    return null;
-  }
-}
-
-app.get('/', (c) => {
-  const html = serveStatic('index.html');
-  if (!html) return c.text('UI not found', 404);
-  return c.html(html);
-});
-
-app.get('/styles.css', (c) => {
-  const css = serveStatic('styles.css');
-  if (!css) return c.text('Not found', 404);
-  return c.body(css, 200, { 'Content-Type': 'text/css' });
-});
-
-app.get('/app.js', (c) => {
-  const js = serveStatic('app.js');
-  if (!js) return c.text('Not found', 404);
-  return c.body(js, 200, { 'Content-Type': 'application/javascript' });
 });
 
 // Serve screenshots saved by the auditor
@@ -214,6 +186,11 @@ app.get('/browser/info', async (c) => {
     }, 500);
   }
 });
+
+// Serve the React UI
+app.use('/*', serveStatic({ root: './public/build' }));
+app.get('/*', serveStatic({ path: './public/build/index.html' }));
+
 
 // 404 handler
 app.notFound((c) => {

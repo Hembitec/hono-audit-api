@@ -5,12 +5,13 @@
   "main": "dist/index.js",
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
+    "dev": "nodemon --watch src --exec tsx src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
     "type-check": "tsc --noEmit",
     "clean": "rimraf dist",
-    "test": "vitest"
+    "test": "vitest",
+    "vercel-build": "npm install --prefix public && npm run build --prefix public && npm run build"
   },
   "keywords": [
     "hono",
