@@ -27,6 +27,62 @@ export interface WebsiteAuditResult {
   };
   /** Screenshot(s) captured for the page (optional) */
   screenshot?: ScreenshotInfo | ScreenshotInfo[];
+  /** Accessibility audit results (optional) */
+  accessibility?: AccessibilityAudit;
+  /** Security audit results (optional) */
+  security?: SecurityAudit;
+  /** Detected technologies (optional) */
+  technologies?: Technology[];
+}
+
+/**
+ * Detected technology details
+ */
+export interface Technology {
+  name: string;
+  version?: string;
+  categories: string[];
+}
+
+/**
+ * Security audit details
+ */
+export interface SecurityAudit {
+  headers: SecurityHeader[];
+}
+
+/**
+ * Security header information
+ */
+export interface SecurityHeader {
+  name: string;
+  value?: string;
+  present: boolean;
+}
+
+/**
+ * Accessibility violation details from axe-core
+ */
+export interface AccessibilityViolation {
+  id: string;
+  impact: 'minor' | 'moderate' | 'serious' | 'critical';
+  description: string;
+  help: string;
+  helpUrl: string;
+  nodes: any[];
+}
+
+/**
+ * Summary of accessibility audit
+ */
+export interface AccessibilityAudit {
+  violations: AccessibilityViolation[];
+  violationSummary: {
+    critical: number;
+    serious: number;
+    moderate: number;
+    minor: number;
+  };
 }
 
 /**
@@ -49,6 +105,17 @@ export interface PageMetadata {
 export interface PerformanceMetrics {
   /** Total page load time in milliseconds */
   loadTimeInMs: number;
+  /** Core Web Vitals (optional) */
+  coreWebVitals?: CoreWebVitals;
+}
+
+/**
+ * Core Web Vitals metrics
+ */
+export interface CoreWebVitals {
+  lcp: number; // Largest Contentful Paint
+  fid: number; // First Input Delay
+  cls: number; // Cumulative Layout Shift
 }
 
 /**
@@ -237,4 +304,6 @@ export interface AuditOptions {
   screenshotQuality?: number;
   /** User agent string to use */
   userAgent?: string;
+  /** Specific checks to run for quick audit */
+  checks?: ('seo' | 'performance' | 'statistics')[];
 }

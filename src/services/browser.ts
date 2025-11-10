@@ -1,4 +1,4 @@
-import puppeteer, { Browser, Page, PuppeteerLaunchOptions, ScreenshotOptions } from 'puppeteer';
+import { chromium, Browser, Page, LaunchOptions, ScreenshotOptions } from 'playwright';
 import { AuditOptions, ApiError } from '../types/interfaces.js';
 import fs from 'fs';
 import path from 'path';
@@ -27,7 +27,7 @@ export class BrowserService {
     }
 
     try {
-      const launchOptions: PuppeteerLaunchOptions = {
+      const launchOptions: LaunchOptions = {
         headless: true,
         args: [
           '--no-sandbox',
@@ -41,19 +41,12 @@ export class BrowserService {
           '--disable-background-timer-throttling',
           '--disable-backgrounding-occluded-windows',
           '--disable-renderer-backgrounding',
-          '--disable-features=TranslateUI',
-          '--disable-ipc-flooding-protection',
         ],
-        // Optimize for server environments
-        defaultViewport: {
-          width: 1920,
-          height: 1080,
-        },
         // Timeout for browser launch
         timeout: 30000,
       };
 
-      this.browser = await puppeteer.launch(launchOptions);
+      this.browser = await chromium.launch(launchOptions);
       this.isInitialized = true;
 
       // Handle browser disconnect
@@ -125,8 +118,8 @@ export class BrowserService {
     const startTime = Date.now();
 
     try {
-      // Create a new page
-      page = await this.browser.newPage();
+      const context = await this.browser.newContext({ userAgent: options.userAgent });
+      page = await context.newPage();
 
       // Configure page settings
       await this.configurePage(page, options);
@@ -136,7 +129,7 @@ export class BrowserService {
 
       // Navigate to the page with timeout
       const response = await page.goto(url, {
-        waitUntil: 'networkidle0', // Wait until there are no network requests for 500ms
+        waitUntil: 'networkidle', // Wait until there are no network requests for 500ms
         timeout: options.timeout || 30000,
       });
 
@@ -175,6 +168,7 @@ export class BrowserService {
         performanceMetrics,
         totalTime: Date.now() - startTime,
         headers, // added headers
+        page,
       };
 
       return result;
@@ -195,58 +189,30 @@ export class BrowserService {
       };
 
       return errorResult;
-
-    } finally {
-      // Always close the page to free up resources
-      if (page) {
-        try {
-          await page.close();
-        } catch (closeError) {
-          console.warn('Failed to close page:', closeError);
-        }
-      }
-      // release concurrency slot
-      try {
-        this.releaseSlot();
-      } catch (e) {
-        console.warn('releaseSlot error:', e);
-      }
     }
   }
 
   /**
    * Configure page settings and event handlers
-   * @param page - Puppeteer page instance
+   * @param page - Playwright page instance
    * @param options - Audit options
    */
-  private async configurePage(page: Page, options: AuditOptions): Promise<void> {
-    // Set user agent if provided
-    if (options.userAgent) {
-      await page.setUserAgent(options.userAgent);
-    } else {
-      // Use a realistic user agent
-      await page.setUserAgent(
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-      );
-    }
-
+  async configurePage(page: Page, options: AuditOptions): Promise<void> {
     // Set viewport
-    await page.setViewport({
+    await page.setViewportSize({
       width: 1920,
       height: 1080,
-      deviceScaleFactor: 1,
     });
 
     // Block unnecessary resources to speed up loading
-    await page.setRequestInterception(true);
-    page.on('request', (request) => {
-      const resourceType = request.resourceType();
+    await page.route('**/*', (route) => {
+      const resourceType = route.request().resourceType();
       
       // Block images, fonts, and other non-essential resources for faster loading
       if (['image', 'font', 'media'].includes(resourceType)) {
-        request.abort();
+        route.abort();
       } else {
-        request.continue();
+        route.continue();
       }
     });
 
@@ -264,16 +230,16 @@ export class BrowserService {
 
   /**
    * Wait for dynamic content to load
-   * @param page - Puppeteer page instance
+   * @param page - Playwright page instance
    */
   private async waitForDynamicContent(page: Page): Promise<void> {
     try {
       // Wait for common dynamic content indicators
       await Promise.race([
         // Wait for a reasonable amount of time for SPA content
-        new Promise(resolve => setTimeout(resolve, 2000)),
+        page.waitForTimeout(2000),
         // Simple delay as fallback
-        new Promise(resolve => setTimeout(resolve, 1000)),
+        page.waitForTimeout(1000),
       ]);
 
       // Additional wait for common frameworks
@@ -296,7 +262,7 @@ export class BrowserService {
 
   /**
    * Get performance metrics from the page
-   * @param page - Puppeteer page instance
+   * @param page - Playwright page instance
    * @returns Performance metrics object
    */
   private async getPerformanceMetrics(page: Page): Promise<PerformanceMetrics> {
@@ -377,7 +343,7 @@ export class BrowserService {
       return 'Browser not initialized';
     }
 
-    return await this.browser.version();
+    return this.browser.version();
   }
 
   /**
@@ -399,8 +365,8 @@ export class BrowserService {
       const MAX_SINGLE_IMAGE_HEIGHT = opts.maxHeight ?? 15000; // px
 
       console.log('screenshotUrl: navigating to', url);
-      await page.setViewport({ width: 1280, height: 800 });
-      const response = await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
+      await page.setViewportSize({ width: 1280, height: 800 });
+      const response = await page.goto(url, { waitUntil: 'networkidle', timeout: 30000 });
       await this.waitForDynamicContent(page);
 
       const dims = await page.evaluate(() => {
@@ -428,7 +394,7 @@ export class BrowserService {
         try {
           const screenshotOpts: any = { type, fullPage: true };
           if (type === 'jpeg' && typeof quality === 'number') screenshotOpts.quality = quality;
-          const buffer = (await page.screenshot(screenshotOpts as ScreenshotOptions)) as unknown as Buffer;
+          const buffer = await page.screenshot(screenshotOpts as ScreenshotOptions);
           const filename = `${safeName}_${timestamp}.${ext}`;
           const filePath = path.join(screenshotsDir, filename);
           await fs.promises.writeFile(filePath, buffer);
@@ -452,7 +418,7 @@ export class BrowserService {
             const clip = { x: 0, y: Math.max(0, Math.floor(part.y)), width: Math.max(1, Math.floor(dims.width)), height: Math.max(1, Math.floor(part.height)) };
             const clipOpts: any = { type, clip };
             if (type === 'jpeg' && typeof quality === 'number') clipOpts.quality = quality;
-            const buffer = (await page.screenshot(clipOpts as ScreenshotOptions)) as unknown as Buffer;
+            const buffer = await page.screenshot(clipOpts as ScreenshotOptions);
             const filename = `${safeName}_${timestamp}_${part.suffix}.${ext}`;
             const filePath = path.join(screenshotsDir, filename);
             await fs.promises.writeFile(filePath, buffer);
@@ -519,6 +485,7 @@ export interface PageLoadResult {
   totalTime?: number;
   error?: ApiError;
   headers?: Record<string, string>; // added headers field
+  page?: Page;
 }
 
 /**
